@@ -11,6 +11,7 @@ parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--n_restarts', type=int, default=10)
 parser.add_argument('--penalty_anneal_iters', type=int, default=100)
 parser.add_argument('--penalty_weight', type=float, default=10000.0)
+parser.add_argument('--penalty_ratio', type=float, default=1.0)
 parser.add_argument('--steps', type=int, default=501)
 parser.add_argument('--grayscale_model', action='store_true')
 flags = parser.parse_args()
@@ -97,11 +98,12 @@ for restart in range(flags.n_restarts):
     preds = (logits > 0.).float()
     return ((preds - y).abs() < 1e-2).float().mean()
 
-  def penalty(logits, y):
+  def penalty(logits, y, ratio=1.0):
     scale = torch.tensor(1.).cuda().requires_grad_()
-    loss = mean_nll(logits * scale, y)
-    grad = autograd.grad(loss, [scale], create_graph=True)[0]
-    return torch.sum(grad**2)
+    offset = torch.tensor(0.).cuda().requires_grad_()
+    loss = mean_nll(logits * scale + offset, y)
+    grad, offset = autograd.grad(loss, [scale, offset], create_graph=True)
+    return ratio * grad**2 + (1 - ratio) * offset**2
 
   # Train loop
 
@@ -123,7 +125,7 @@ for restart in range(flags.n_restarts):
       logits = mlp(env['images'])
       env['nll'] = mean_nll(logits, env['labels'])
       env['acc'] = mean_accuracy(logits, env['labels'])
-      env['penalty'] = penalty(logits, env['labels'])
+      env['penalty'] = penalty(logits, env['labels'], flags.penalty_ratio)
 
     train_nll = torch.stack([envs[0]['nll'], envs[1]['nll']]).mean()
     train_acc = torch.stack([envs[0]['acc'], envs[1]['acc']]).mean()
