@@ -124,13 +124,15 @@ for restart in range(flags.n_restarts):
   for step in range(flags.steps):
     total_w_penalty = 0
     total_b_penalty = 0
-    for env in envs:
+    for i, env in enumerate(envs):
       logits = mlp(env['images'])
       env['nll'] = mean_nll(logits, env['labels'])
       env['acc'] = mean_accuracy(logits, env['labels'])
       w_penalty, b_penalty = penalty(logits, env['labels'])
-      total_w_penalty += w_penalty.detach().cpu().numpy()
-      total_b_penalty += b_penalty.detach().cpu().numpy()
+      
+      if i < 2:
+        total_w_penalty += w_penalty.detach().cpu().numpy()
+        total_b_penalty += b_penalty.detach().cpu().numpy()
       env['penalty'] = ratio * w_penalty + (1 - ratio) * b_penalty
 
     train_nll = torch.stack([envs[0]['nll'], envs[1]['nll']]).mean()
