@@ -98,12 +98,12 @@ for restart in range(flags.n_restarts):
     preds = (logits > 0.).float()
     return ((preds - y).abs() < 1e-2).float().mean()
 
-  def penalty(logits, y, ratio=1.0):
+  def penalty(logits, y):
     scale = torch.tensor(1.).cuda().requires_grad_()
-    offset = torch.tensor(0.).cuda().requires_grad_()
-    loss = mean_nll(logits * scale + offset, y)
-    grad, offset = autograd.grad(loss, [scale, offset], create_graph=True)
-    return ratio * grad**2 + (1 - ratio) * offset**2
+    bias = torch.tensor(0.).cuda().requires_grad_()
+    loss = mean_nll(logits * scale + bias, y)
+    scale_grad, bias_grad = autograd.grad(loss, [scale, bias], create_graph=True)
+    return scale_grad**2, bias_grad**2
 
   # Train loop
 
@@ -117,15 +117,21 @@ for restart in range(flags.n_restarts):
     print("   ".join(str_values))
 
   optimizer = optim.Adam(mlp.parameters(), lr=flags.lr)
+  ratio = flags.penalty_ratio
 
-  pretty_print('step', 'train nll', 'train acc', 'train penalty', 'test acc')
+  pretty_print('step', 'train nll', 'train acc', 'train penalty', 'w penalty', 'b penalty', 'test acc')
 
   for step in range(flags.steps):
+    total_w_penalty = 0
+    total_b_penalty = 0
     for env in envs:
       logits = mlp(env['images'])
       env['nll'] = mean_nll(logits, env['labels'])
       env['acc'] = mean_accuracy(logits, env['labels'])
-      env['penalty'] = penalty(logits, env['labels'], flags.penalty_ratio)
+      w_penalty, b_penalty = penalty(logits, env['labels'])
+      total_w_penalty += w_penalty.detach().cpu().numpy()
+      total_b_penalty += b_penalty.detach().cpu().numpy()
+      env['penalty'] = ratio * w_penalty + (1 - ratio) * b_penalty
 
     train_nll = torch.stack([envs[0]['nll'], envs[1]['nll']]).mean()
     train_acc = torch.stack([envs[0]['acc'], envs[1]['acc']]).mean()
@@ -155,6 +161,8 @@ for restart in range(flags.n_restarts):
         train_nll.detach().cpu().numpy(),
         train_acc.detach().cpu().numpy(),
         train_penalty.detach().cpu().numpy(),
+        total_w_penalty / 2,
+        total_b_penalty / 2,
         test_acc.detach().cpu().numpy()
       )
 
